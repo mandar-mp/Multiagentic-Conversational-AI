@@ -1,0 +1,55 @@
+# Core Dependencies
+langgraph==0.0.26
+langchain==0.1.0
+langchain-core==0.1.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# LLM Providers
+openai==1.3.0
+anthropic==0.7.0
+google-generativeai>=0.14.0
+
+# API Framework
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
+
+# Database
+sqlalchemy==2.0.23
+alembic==1.13.0
+
+# Caching & Async
+redis==5.0.1
+aioredis==2.0.1
+
+# Vector Stores
+#pinecone-client==3.0.0
+langchain-community==0.0.13
+
+# Data Processing
+numpy==1.24.3
+#pandas==2.1.3
+
+# Utilities
+python-dotenv==1.0.0
+httpx==0.25.2
+requests==2.31.0
+
+# Logging & Monitoring
+python-json-logger==2.0.7
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+
+# Code Quality
+black==23.12.0
+flake8==6.1.0
+isort==5.13.2
+mypy==1.7.1
+
+# Documentation
+sphinx==7.2.6
+sphinx-rtd-theme==2.0.0

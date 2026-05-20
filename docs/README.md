@@ -79,11 +79,62 @@ Key settings:
 
 ### Development
 
+#### Backend API
+
+Start the FastAPI server with auto-reload:
+
 ```bash
-python main.py
-# or with uvicorn
-uvicorn main:app --reload
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+The API will be available at `http://localhost:8000`
+- API docs: `http://localhost:8000/docs`
+- Swagger UI: `http://localhost:8000/swagger.json`
+
+#### Frontend UI (Angular)
+
+From the `frontend/` directory, install dependencies and start the development server:
+
+```bash
+cd frontend
+npm install
+npm start
+```
+
+The Angular UI will be available at `http://localhost:4200`
+
+#### Running Both Simultaneously
+
+Open two separate terminals from the workspace root:
+
+**Terminal 1 (Backend):**
+```bash
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**Terminal 2 (Frontend):**
+```bash
+cd frontend
+npm start
+```
+
+#### Alternative Frontend Startup (if `npm start` fails)
+
+```bash
+cd frontend
+npx @angular/cli serve --host 0.0.0.0 --port 4200 --proxy-config proxy.conf.json
+```
+
+#### Streamlit UI (Alternative Interface)
+
+Run the lightweight Streamlit chatbot interface:
+
+```bash
+python -m pip install -r streamlit_ui/requirements.txt
+streamlit run streamlit_ui/app.py
+```
+
+The Streamlit UI will be available at `http://localhost:8501`
 
 ### Docker
 

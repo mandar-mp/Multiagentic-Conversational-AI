@@ -1,0 +1,55 @@
+<div class="app-shell">
+  <div class="chat-card">
+    <div class="header">
+      <div class="brand">
+        <div class="brand-badge">G</div>
+        <div>
+          <h1 class="brand-title">Gemini Chat</h1>
+          <p class="brand-subtitle">A Gemini-style chatbot interface for your AI API</p>
+        </div>
+      </div>
+      <div class="status-pill">
+        <span class="spinner" *ngIf="isSending"></span>
+        <span>{{ isSending ? 'Typing…' : statusMessage }}</span>
+      </div>
+    </div>
+
+    <div class="conversation" role="log" aria-live="polite">
+      <div *ngFor="let message of messages" class="message" [class.user]="message.role === 'user'" [class.assistant]="message.role === 'assistant'">
+        <div class="message-meta">
+          <span class="message-role">{{ message.role === 'user' ? 'You' : 'Gemini' }}</span>
+          <span>{{ formatTimestamp(message.timestamp) }}</span>
+        </div>
+        <div class="message-bubble">{{ message.content }}</div>
+      </div>
+    </div>
+
+    <div class="input-panel">
+      <div class="controls">
+        <div class="conversation-id">
+          <strong>Conversation:</strong>
+          <span>{{ conversationId || 'new session' }}</span>
+        </div>
+        <button class="send-button" type="button" (click)="clearConversation()">Reset</button>
+      </div>
+
+      <div class="user-input">
+        <textarea
+          class="chat-input"
+          rows="4"
+          placeholder="Ask Gemini anything..."
+          [(ngModel)]="inputText"
+          [disabled]="isSending"
+          (keyup.enter)="sendMessage()"
+        ></textarea>
+
+        <div class="action-row">
+          <span class="status-pill">Powered by your backend API</span>
+          <button class="send-button" type="button" [disabled]="!inputText.trim() || isSending" (click)="sendMessage()">
+            {{ isSending ? 'Sending…' : 'Send message' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

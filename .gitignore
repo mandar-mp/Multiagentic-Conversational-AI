@@ -45,9 +45,11 @@ env/
 # Logs
 logs/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Database
-*.db
 *.sqlite
 *.sqlite3
 
@@ -60,6 +62,7 @@ data/vectors/
 .pytest_cache/
 .coverage
 htmlcov/
+coverage/
 
 # Docker
 .dockerignore
@@ -68,3 +71,34 @@ htmlcov/
 .DS_Store
 .env.production
 config/secrets/
+
+# Angular Frontend (node_modules and build artifacts)
+frontend/node_modules/
+frontend/.angular/
+frontend/dist/
+frontend/npm-debug.log
+frontend/.angular.json.bak
+frontend/karma.conf.js.bak
+frontend/src/environments/environment.*.ts
+
+# Angular build files (but keep source)
+frontend/dist/
+frontend/.angular/
+
+# Streamlit UI
+streamlit_ui/__pycache__/
+streamlit_ui/*.pyc
+streamlit_ui/.streamlit/secrets.toml
+streamlit_ui/.cache/
+
+# Note: The following ARE committed:
+# - frontend/package.json
+# - frontend/package-lock.json
+# - frontend/tsconfig.json
+# - frontend/angular.json
+# - frontend/src/ (all source files)
+# - streamlit_ui/app.py
+# - streamlit_ui/api_client.py
+# - streamlit_ui/config.py
+# - streamlit_ui/requirements.txt
+# - streamlit_ui/.streamlit/config.toml

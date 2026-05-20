@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from config.settings import settings
 from src.db.session import init_db
@@ -17,6 +17,7 @@ from src.models.message import Message
 from src.services.conversation_service import ConversationService
 from src.services.llm_service import LLMService
 from src.utils.logger import setup_logger
+from src.workflows.main_workflow import create_main_workflow
 
 # Setup logging
 logger = setup_logger(__name__)
@@ -30,6 +31,7 @@ llm_service = LLMService(
     max_tokens=settings.llm_max_tokens,
     timeout=settings.llm_timeout,
 )
+agent_workflow = create_main_workflow(llm_service=llm_service)
 
 # Configure root logger
 logging.basicConfig(
@@ -54,7 +56,9 @@ class ReadyResponse(BaseModel):
 class ChatRequest(BaseModel):
     """Chat request model"""
     message: str
-    conversation_id: str = None
+    conversation_id: Optional[str] = None
+    user_id: Optional[str] = None
+    user_context: dict = Field(default_factory=dict)
 
 
 class ChatResponse(BaseModel):
@@ -62,7 +66,18 @@ class ChatResponse(BaseModel):
     status: str
     response: str
     conversation_id: str
-    metadata: dict = {}
+    metadata: dict = Field(default_factory=dict)
+
+
+def _workflow_result_to_dict(result):
+    """Normalize LangGraph output across versions."""
+    if isinstance(result, dict):
+        return result
+    if hasattr(result, "model_dump"):
+        return result.model_dump()
+    if hasattr(result, "dict"):
+        return result.dict()
+    return {}
 
 
 @asynccontextmanager
@@ -174,13 +189,43 @@ async def chat(request: ChatRequest):
         for msg in history
     ]
 
-    response_text = await llm_service.generate_with_history(
-        history_payload,
-        provider=settings.llm_provider,
-        model=settings.llm_model,
-        temperature=settings.llm_temperature,
-        max_tokens=settings.llm_max_tokens,
-    )
+    workflow_state = {
+        "conversation_id": conversation_id,
+        "current_input": request.message,
+        "conversation_history": history_payload,
+        "user_id": request.user_id,
+        "user_context": request.user_context or {},
+        "metadata": {
+            "provider": settings.llm_provider,
+            "model": settings.llm_model,
+        },
+    }
+
+    try:
+        workflow_result = _workflow_result_to_dict(await agent_workflow.ainvoke(workflow_state))
+        response_text = workflow_result.get("final_response") or ""
+        response_metadata = {
+            "provider": settings.llm_provider,
+            "model": settings.llm_model,
+            "intent": (workflow_result.get("intent_result") or {}).get("intent"),
+            "routing_decision": workflow_result.get("routing_decision"),
+            "capability_matches": workflow_result.get("capability_matches", []),
+            "guardrails": workflow_result.get("guardrails", {}),
+        }
+    except Exception as e:
+        logger.exception("Agent workflow failed; falling back to direct LLM call: %s", str(e))
+        response_text = await llm_service.generate_with_history(
+            history_payload,
+            provider=settings.llm_provider,
+            model=settings.llm_model,
+            temperature=settings.llm_temperature,
+            max_tokens=settings.llm_max_tokens,
+        )
+        response_metadata = {
+            "provider": settings.llm_provider,
+            "model": settings.llm_model,
+            "workflow_fallback": True,
+        }
 
     assistant_message = Message(role="assistant", content=response_text)
     conversation_service.add_message(conversation_id, assistant_message)
@@ -189,7 +234,7 @@ async def chat(request: ChatRequest):
         status="success",
         response=response_text,
         conversation_id=conversation_id,
-        metadata={"provider": settings.llm_provider, "model": settings.llm_model},
+        metadata=response_metadata,
     )
 
 

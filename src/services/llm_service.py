@@ -2,14 +2,25 @@
 Language Model service for LLM interactions
 """
 
+import asyncio
 import logging
 from typing import Optional, List, Dict, Any
 from abc import ABC, abstractmethod
 
 try:
-    import google.generativeai as genai
+    import google.genai as genai
 except ImportError:
     genai = None
+
+try:
+    from openai import OpenAI as OpenAIClient
+except ImportError:
+    OpenAIClient = None
+
+try:
+    import anthropic
+except ImportError:
+    anthropic = None
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +83,32 @@ class LLMService(BaseLLMService):
         max_tokens = kwargs.get("max_tokens", self.max_tokens)
 
         if provider == "gemini":
-            return self._generate_gemini(prompt, model, temperature, max_tokens)
+            return await asyncio.to_thread(
+                self._generate_gemini,
+                prompt,
+                model,
+                temperature,
+                max_tokens,
+            )
 
-        logger.info("Generating response from LLM")
+        if provider == "openai":
+            return await asyncio.to_thread(
+                self._generate_openai,
+                prompt,
+                model,
+                temperature,
+                max_tokens,
+            )
+
+        if provider == "anthropic":
+            return await asyncio.to_thread(
+                self._generate_anthropic,
+                prompt,
+                model,
+                temperature,
+                max_tokens,
+            )
+
         raise RuntimeError(f"Provider '{provider}' is not implemented in LLMService")
     
     async def generate_with_history(self, messages: List[Dict], **kwargs) -> str:
@@ -85,30 +119,91 @@ class LLMService(BaseLLMService):
         return await self.generate(prompt, **kwargs)
 
     def _generate_gemini(self, prompt: str, model: str, temperature: float, max_tokens: int) -> str:
-        """Generate text using Google Gemini via google-generativeai."""
+        """Generate text using Google Gemini via google.genai."""
         if genai is None:
             raise RuntimeError(
-                "google-generativeai is not installed. Install it with 'pip install google-generativeai'"
+                "google-genai is not installed. Install it with 'pip install google-genai'"
             )
         if not self.api_key:
             raise RuntimeError("Gemini provider requires an API key set in LLM_API_KEY")
 
-        genai.configure(api_key=self.api_key)
+        client = genai.Client(api_key=self.api_key)
+        chat = client.chats.create(model=model)
+        response = chat.send_message(
+            prompt,
+            config={
+                "temperature": temperature,
+                "max_output_tokens": max_tokens,
+            },
+        )
 
-        response = genai.generate_text(
+        return self._extract_gemini_response(response)
+
+    def _extract_gemini_response(self, response: Any) -> str:
+        """Extract text from a Gemini generate response."""
+        if not response:
+            return ""
+
+        candidates = getattr(response, "candidates", None)
+        if candidates:
+            first = candidates[0]
+            content = getattr(first, "content", None)
+            if content is not None:
+                parts = getattr(content, "parts", [])
+                if parts:
+                    text_parts = [getattr(part, "text", "") for part in parts if getattr(part, "text", None) is not None]
+                    if text_parts:
+                        return "".join(text_parts)
+                raw = getattr(content, "text", None)
+                if raw:
+                    return raw
+        return str(response)
+
+    def _generate_openai(self, prompt: str, model: str, temperature: float, max_tokens: int) -> str:
+        """Generate text using OpenAI."""
+        if OpenAIClient is None:
+            raise RuntimeError("OpenAI client is not installed. Install it with 'pip install openai'")
+        if not self.api_key:
+            raise RuntimeError("OpenAI provider requires an API key set in LLM_API_KEY")
+
+        client = OpenAIClient(api_key=self.api_key)
+        response = client.responses.create(
             model=model,
-            prompt=prompt,
+            input=prompt,
             temperature=temperature,
             max_output_tokens=max_tokens,
         )
 
-        if hasattr(response, "text"):
-            return response.text
+        if hasattr(response, "output_text"):
+            return response.output_text
+        if isinstance(response, dict):
+            return response.get("output_text", str(response))
+        return str(response)
+
+    def _generate_anthropic(self, prompt: str, model: str, temperature: float, max_tokens: int) -> str:
+        """Generate text using Anthropic."""
+        if anthropic is None:
+            raise RuntimeError("Anthropic client is not installed. Install it with 'pip install anthropic'")
+        if not self.api_key:
+            raise RuntimeError("Anthropic provider requires an API key set in LLM_API_KEY")
+
+        client = anthropic.Client(api_key=self.api_key)
+        response = client.completions.create(
+            model=model,
+            prompt=prompt,
+            temperature=temperature,
+            max_tokens_to_sample=max_tokens,
+        )
+
+        if hasattr(response, "completion"):
+            return response.completion
+        if isinstance(response, dict):
+            return response.get("completion", str(response))
         return str(response)
 
     @staticmethod
     def _build_prompt_from_history(messages: List[Dict]) -> str:
-        """Convert conversation history into a single Gemini prompt."""
+        """Convert conversation history into a single prompt."""
         lines = []
         for message in messages:
             role = message.get("role", "user")

@@ -5,15 +5,31 @@ Multi-Agentic Conversational AI Chatbot using LangGraph
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Optional
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from config.settings import settings
+from src.db.session import init_db
+from src.models.message import Message
+from src.services.conversation_service import ConversationService
+from src.services.llm_service import LLMService
 from src.utils.logger import setup_logger
 
 # Setup logging
 logger = setup_logger(__name__)
+
+conversation_service = ConversationService()
+llm_service = LLMService(
+    provider=settings.llm_provider,
+    api_key=settings.llm_api_key,
+    model=settings.llm_model,
+    temperature=settings.llm_temperature,
+    max_tokens=settings.llm_max_tokens,
+    timeout=settings.llm_timeout,
+)
 
 # Configure root logger
 logging.basicConfig(
@@ -59,7 +75,9 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"Debug mode: {settings.debug}")
-    
+    logger.info("Initializing database schema")
+    init_db()
+
     yield
     
     # Shutdown
@@ -128,25 +146,51 @@ async def chat(request: ChatRequest):
     Main chat endpoint
     Processes user messages through the multi-agent system
     """
-    try:
-        logger.info(f"Processing chat request: {request.message[:100]}")
-        
-        # TODO: Implement core chat logic
-        # 1. Validate input
-        # 2. Get/create conversation
-        # 3. Process through workflow
-        # 4. Return response
-        
-        return ChatResponse(
-            status="success",
-            response="Chat processing not yet implemented",
-            conversation_id=request.conversation_id or "new",
-            metadata={}
-        )
+    if not request.message or not request.message.strip():
+        raise HTTPException(status_code=400, detail="Message must not be empty")
+
+    logger.info(f"Processing chat request: {request.message[:100]}")
+
+    conversation_id = request.conversation_id
+    conversation = None
     
-    except Exception as e:
-        logger.error(f"Error processing chat: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    if conversation_id:
+        conversation = conversation_service.get_conversation(conversation_id)
+        if conversation is None:
+            logger.warning(f"Conversation not found: {conversation_id}. Creating a new one.")
+            conversation = conversation_service.create_conversation()
+            conversation_id = conversation.conversation_id
+            logger.info(f"Conversation created with id: {conversation_id}")
+    else:
+        conversation = conversation_service.create_conversation()
+        conversation_id = conversation.conversation_id
+        logger.info(f"Conversation id newly created: {conversation_id}")
+    user_message = Message(role="user", content=request.message)
+    conversation_service.add_message(conversation_id, user_message)
+
+    history = conversation_service.get_conversation_history(conversation_id, limit=10)
+    history_payload = [
+        {"role": msg.role, "content": msg.content}
+        for msg in history
+    ]
+
+    response_text = await llm_service.generate_with_history(
+        history_payload,
+        provider=settings.llm_provider,
+        model=settings.llm_model,
+        temperature=settings.llm_temperature,
+        max_tokens=settings.llm_max_tokens,
+    )
+
+    assistant_message = Message(role="assistant", content=response_text)
+    conversation_service.add_message(conversation_id, assistant_message)
+
+    return ChatResponse(
+        status="success",
+        response=response_text,
+        conversation_id=conversation_id,
+        metadata={"provider": settings.llm_provider, "model": settings.llm_model},
+    )
 
 
 @app.get("/api/v1/conversations/{conversation_id}")
@@ -157,12 +201,26 @@ async def get_conversation(conversation_id: str):
     try:
         logger.info(f"Retrieving conversation: {conversation_id}")
         
-        # TODO: Implement conversation retrieval
+        conversation = conversation_service.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
         return {
             "conversation_id": conversation_id,
-            "messages": []
+            "messages": [
+                {
+                    "role": message.role,
+                    "content": message.content,
+                    "timestamp": message.timestamp.isoformat(),
+                    "agent_name": message.agent_name,
+                    "metadata": message.metadata,
+                }
+                for message in conversation.messages
+            ]
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error retrieving conversation: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     # Database Configuration
     db_type: str = Field(default="sqlite", env="DB_TYPE")
     db_url: Optional[str] = Field(default="sqlite:///./app.db", env="DB_URL")
+
+    # Analytics Database Configuration
+    analytics_db_url: Optional[str] = Field(default=None, env="ANALYTICS_DB_URL")
+    analytics_db_dialect: Optional[str] = Field(default=None, env="ANALYTICS_DB_DIALECT")
+    analytics_allowed_tables: list = Field(default_factory=list, env="ANALYTICS_ALLOWED_TABLES")
+    analytics_blocked_tables: list = Field(default_factory=list, env="ANALYTICS_BLOCKED_TABLES")
+    analytics_max_rows: int = Field(default=200, env="ANALYTICS_MAX_ROWS")
+    analytics_query_timeout: int = Field(default=30, env="ANALYTICS_QUERY_TIMEOUT")
+    analytics_enable_sql_echo: bool = Field(default=False, env="ANALYTICS_ENABLE_SQL_ECHO")
     
     # Redis Configuration
     redis_enabled: bool = Field(default=False, env="REDIS_ENABLED")

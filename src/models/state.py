@@ -25,6 +25,14 @@ class GraphState(TypedDict, total=False):
     authorization: Dict[str, Any]
     guardrails: Dict[str, Any]
     execution_results: List[Dict[str, Any]]
+    analytics_plan: Dict[str, Any]
+    generated_sql: str
+    sql_generation_assumptions: List[str]
+    sql_generation_confidence: float
+    sql_validation: Dict[str, Any]
+    sql_execution: Dict[str, Any]
+    visualization: Dict[str, Any]
+    data_interpretation: Dict[str, Any]
     agent_responses: Dict[str, Any]
     routing_decision: Optional[str]
     pending_clarification: Optional[str]
@@ -61,6 +69,15 @@ class AppState(BaseModel):
     final_response: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     errors: List[str] = Field(default_factory=list)
+
+    analytics_plan: Dict[str, Any] = Field(default_factory=dict)
+    generated_sql: Optional[str] = None
+    sql_generation_assumptions: List[str] = Field(default_factory=list)
+    sql_generation_confidence: float = 0.0
+    sql_validation: Dict[str, Any] = Field(default_factory=dict)
+    sql_execution: Dict[str, Any] = Field(default_factory=dict)
+    visualization: Dict[str, Any] = Field(default_factory=dict)
+    data_interpretation: Dict[str, Any] = Field(default_factory=dict)
     
     class Config:
         arbitrary_types_allowed = True

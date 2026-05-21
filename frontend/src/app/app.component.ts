@@ -2,7 +2,15 @@ import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ChatService } from './chat.service';
-import { ChatMessage } from './models/chat-message';
+import { ChatMessage, ChatTrace } from './models/chat-message';
+
+interface ChatSession {
+  localId: string;
+  conversationId: string;
+  title: string;
+  updatedAt: string;
+  messages: ChatMessage[];
+}
 
 @Component({
   selector: 'app-root',
@@ -12,12 +20,22 @@ import { ChatMessage } from './models/chat-message';
   styleUrls: ['./app.component.scss']
 })
 export class AppComponent {
-  title = 'Gemini Chat';
+  title = 'Open Chatbot By Mandar';
   messages: ChatMessage[] = [];
+  sessions: ChatSession[] = [];
+  activeSessionId = '';
   inputText = '';
   conversationId = '';
   isSending = false;
-  statusMessage = 'Ready to chat';
+  statusMessage = 'Ready';
+  isFeatureMenuOpen = false;
+
+  readonly suggestedPrompts = [
+    'Summarize this conversation',
+    'Find revenue trends from uploaded data',
+    'Draft a customer email',
+    'Explain the agent trace'
+  ];
 
   constructor(private chatService: ChatService) {}
 
@@ -27,8 +45,10 @@ export class AppComponent {
       return;
     }
 
+    const session = this.ensureActiveSession(trimmed);
     this.isSending = true;
-    this.statusMessage = 'Waiting for Gemini response…';
+    this.statusMessage = 'Thinking';
+    this.isFeatureMenuOpen = false;
 
     const userMessage: ChatMessage = {
       role: 'user',
@@ -37,6 +57,8 @@ export class AppComponent {
     };
 
     this.messages = [...this.messages, userMessage];
+    session.messages = [...this.messages];
+    session.updatedAt = userMessage.timestamp;
     this.inputText = '';
 
     this.chatService.sendMessage({
@@ -45,13 +67,22 @@ export class AppComponent {
     }).subscribe({
       next: response => {
         this.conversationId = response.conversation_id;
+        session.conversationId = response.conversation_id;
+
         const assistantMessage: ChatMessage = {
           role: 'assistant',
           content: response.response,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          metadata: response.metadata
         };
+
         this.messages = [...this.messages, assistantMessage];
-        this.statusMessage = `Gemini replied with ${response.metadata?.model ?? 'model'}`;
+        session.messages = [...this.messages];
+        session.updatedAt = assistantMessage.timestamp;
+        this.bumpSession(session.localId);
+        this.statusMessage = response.metadata?.trace?.summary?.selected_capability
+          ? this.formatLabel(response.metadata.trace.summary.selected_capability)
+          : 'Answered';
         this.isSending = false;
         setTimeout(() => this.scrollToBottom(), 50);
       },
@@ -63,10 +94,75 @@ export class AppComponent {
     });
   }
 
-  clearConversation(): void {
+  startNewChat(): void {
     this.messages = [];
+    this.activeSessionId = '';
     this.conversationId = '';
-    this.statusMessage = 'Conversation reset. Start a new chat.';
+    this.inputText = '';
+    this.statusMessage = 'New chat';
+    this.isFeatureMenuOpen = false;
+  }
+
+  selectSession(session: ChatSession): void {
+    this.activeSessionId = session.localId;
+    this.conversationId = session.conversationId;
+    this.messages = [...session.messages];
+    this.statusMessage = 'Ready';
+    this.isFeatureMenuOpen = false;
+    setTimeout(() => this.scrollToBottom(), 50);
+  }
+
+  clearConversation(): void {
+    this.startNewChat();
+  }
+
+  useSuggestedPrompt(prompt: string): void {
+    this.inputText = prompt;
+  }
+
+  toggleFeatureMenu(): void {
+    this.isFeatureMenuOpen = !this.isFeatureMenuOpen;
+  }
+
+  closeFeatureMenu(): void {
+    this.isFeatureMenuOpen = false;
+  }
+
+  private ensureActiveSession(firstMessage: string): ChatSession {
+    const existing = this.sessions.find(session => session.localId === this.activeSessionId);
+    if (existing) {
+      return existing;
+    }
+
+    const now = new Date().toISOString();
+    const session: ChatSession = {
+      localId: `local-${Date.now()}`,
+      conversationId: '',
+      title: this.makeTitle(firstMessage),
+      updatedAt: now,
+      messages: []
+    };
+
+    this.sessions = [session, ...this.sessions];
+    this.activeSessionId = session.localId;
+    return session;
+  }
+
+  private bumpSession(localId: string): void {
+    const session = this.sessions.find(item => item.localId === localId);
+    if (!session) {
+      return;
+    }
+
+    this.sessions = [
+      session,
+      ...this.sessions.filter(item => item.localId !== localId)
+    ];
+  }
+
+  private makeTitle(message: string): string {
+    const normalized = message.replace(/\s+/g, ' ').trim();
+    return normalized.length > 42 ? `${normalized.slice(0, 42)}...` : normalized;
   }
 
   private scrollToBottom(): void {
@@ -78,5 +174,39 @@ export class AppComponent {
 
   formatTimestamp(timestamp: string): string {
     return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  formatSessionTime(timestamp: string): string {
+    return new Date(timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  }
+
+  getTrace(message: ChatMessage): ChatTrace | undefined {
+    return message.metadata?.trace;
+  }
+
+  formatLabel(value?: string): string {
+    if (!value) {
+      return 'Not available';
+    }
+
+    return value
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, char => char.toUpperCase());
+  }
+
+  formatConfidence(value?: number): string {
+    if (value === undefined || value === null) {
+      return 'N/A';
+    }
+
+    return `${Math.round(value * 100)}%`;
+  }
+
+  formatDuration(value?: number): string {
+    if (value === undefined || value === null) {
+      return 'N/A';
+    }
+
+    return `${value} ms`;
   }
 }

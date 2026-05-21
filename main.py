@@ -4,8 +4,9 @@ Multi-Agentic Conversational AI Chatbot using LangGraph
 """
 
 import logging
+import time
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +17,8 @@ from src.db.session import init_db
 from src.models.message import Message
 from src.services.conversation_service import ConversationService
 from src.services.llm_service import LLMService
+from src.services.prompt_service import PromptService
+from src.services.database_analytics_service import DatabaseAnalyticsService
 from src.utils.logger import setup_logger
 from src.workflows.main_workflow import create_main_workflow
 
@@ -31,7 +34,21 @@ llm_service = LLMService(
     max_tokens=settings.llm_max_tokens,
     timeout=settings.llm_timeout,
 )
-agent_workflow = create_main_workflow(llm_service=llm_service)
+analytics_db_url = settings.analytics_db_url or settings.db_url
+analytics_service = DatabaseAnalyticsService(
+    db_url=analytics_db_url,
+    dialect=settings.analytics_db_dialect,
+    allowed_tables=settings.analytics_allowed_tables,
+    blocked_tables=settings.analytics_blocked_tables,
+    max_rows=settings.analytics_max_rows,
+    query_timeout=settings.analytics_query_timeout,
+    echo=settings.analytics_enable_sql_echo,
+)
+agent_workflow = create_main_workflow(
+    llm_service=llm_service,
+    prompt_service=PromptService(),
+    db_service=analytics_service,
+)
 
 # Configure root logger
 logging.basicConfig(
@@ -78,6 +95,181 @@ def _workflow_result_to_dict(result):
     if hasattr(result, "dict"):
         return result.dict()
     return {}
+
+
+def _round_confidence(value: Any) -> Optional[float]:
+    """Return a compact confidence value for API metadata."""
+    try:
+        return round(float(value), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _summarize_plan(plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep plan metadata useful without exposing full internal inputs."""
+    summarized = []
+    for step in plan or []:
+        summarized.append(
+            {
+                "step_id": step.get("step_id"),
+                "agent_name": step.get("agent_name"),
+                "action": step.get("action"),
+                "requires_approval": bool(step.get("requires_approval")),
+                "status": step.get("status", "pending"),
+            }
+        )
+    return summarized
+
+
+def _summarize_execution_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Summarize tool results for explainability panels."""
+    summarized = []
+    for result in results or []:
+        output = result.get("output") or {}
+        summarized.append(
+            {
+                "agent_name": result.get("agent_name"),
+                "status": result.get("status"),
+                "message": output.get("message"),
+                "error": result.get("error"),
+            }
+        )
+    return summarized
+
+
+def _build_agent_steps(workflow_result: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Build a user-safe trace of the workflow agents that participated."""
+    guardrails = workflow_result.get("guardrails") or {}
+    execution_results = workflow_result.get("execution_results") or []
+    audit_logged = (workflow_result.get("metadata") or {}).get("audit_logged")
+
+    return [
+        {
+            "name": "ConversationContextAgent",
+            "role": "Prepared recent conversation context.",
+            "status": "completed",
+            "detail": "Added compact context such as recent message count.",
+        },
+        {
+            "name": "IntentRouterAgent",
+            "role": "Detected the user's intent.",
+            "status": "completed" if workflow_result.get("intent_result") else "skipped",
+            "detail": f"Intent: {(workflow_result.get('intent_result') or {}).get('intent', 'unknown')}",
+        },
+        {
+            "name": "CapabilityMatchingAgent",
+            "role": "Matched the request to enterprise capabilities.",
+            "status": "completed" if workflow_result.get("capability_matches") else "skipped",
+            "detail": "Ranked capabilities by intent and keyword matches.",
+        },
+        {
+            "name": "PlanningAgent",
+            "role": "Created executable plan steps.",
+            "status": "completed" if workflow_result.get("plan") else "skipped",
+            "detail": f"Plan steps: {len(workflow_result.get('plan') or [])}",
+        },
+        {
+            "name": "AuthorizationAgent",
+            "role": "Checked required permissions.",
+            "status": "completed" if workflow_result.get("authorization") else "skipped",
+            "detail": "Access allowed." if (workflow_result.get("authorization") or {}).get("allowed") else "Access blocked or not fully authorized.",
+        },
+        {
+            "name": "GuardrailAgent",
+            "role": "Applied approval and safety checks.",
+            "status": "completed" if guardrails.get("passed") else "blocked",
+            "detail": "No guardrail blocks." if guardrails.get("passed") else "One or more steps were blocked.",
+        },
+        {
+            "name": "ToolExecutionAgent",
+            "role": "Executed approved tools.",
+            "status": "completed" if execution_results else "skipped",
+            "detail": f"Tool results: {len(execution_results)}",
+        },
+        {
+            "name": "ResponseGenerationAgent",
+            "role": "Prepared the final user-facing answer.",
+            "status": "completed" if workflow_result.get("final_response") else "skipped",
+            "detail": "Generated response from workflow context and tool outputs.",
+        },
+        {
+            "name": "AuditLoggingAgent",
+            "role": "Recorded the workflow audit event.",
+            "status": "completed" if audit_logged else "skipped",
+            "detail": "Audit metadata was added." if audit_logged else "Audit flag was not returned.",
+        },
+    ]
+
+
+def _build_response_trace(
+    workflow_result: Dict[str, Any],
+    history_payload: List[Dict[str, str]],
+    duration_ms: int,
+    workflow_fallback: bool = False,
+) -> Dict[str, Any]:
+    """Create explainability metadata suitable for enterprise chat users."""
+    intent_result = workflow_result.get("intent_result") or {}
+    capability_matches = workflow_result.get("capability_matches") or []
+    selected_capability = (
+        capability_matches[0].get("capability_name")
+        if capability_matches
+        else "general_assistant"
+    )
+    execution_results = workflow_result.get("execution_results") or []
+
+    answer_source = "workflow"
+    if workflow_fallback:
+        answer_source = "direct_llm_fallback"
+    elif selected_capability == "general_assistant" and not execution_results:
+        answer_source = "general_llm"
+    elif execution_results:
+        answer_source = "tool_or_capability"
+
+    if workflow_fallback:
+        agent_steps = [
+            {
+                "name": "DirectLLMFallback",
+                "role": "Generated an answer after workflow execution failed.",
+                "status": "completed",
+                "detail": "The main agent workflow raised an exception.",
+            }
+        ]
+    else:
+        agent_steps = _build_agent_steps(workflow_result)
+
+    return {
+        "summary": {
+            "intent": intent_result.get("intent"),
+            "intent_confidence": _round_confidence(intent_result.get("confidence")),
+            "routing_decision": workflow_result.get("routing_decision"),
+            "selected_capability": selected_capability,
+            "answer_source": answer_source,
+            "duration_ms": duration_ms,
+        },
+        "agents": agent_steps,
+        "capability_matches": [
+            {
+                "capability_name": match.get("capability_name"),
+                "confidence": _round_confidence(match.get("confidence")),
+                "reason": match.get("reason"),
+            }
+            for match in capability_matches
+        ],
+        "plan": _summarize_plan(workflow_result.get("plan") or []),
+        "authorization": workflow_result.get("authorization") or {},
+        "guardrails": workflow_result.get("guardrails") or {},
+        "execution_results": _summarize_execution_results(execution_results),
+        "conversation_context": {
+            "history_messages_used": len(history_payload),
+            "used_prior_context": len(history_payload) > 1,
+        },
+        "model": {
+            "provider": settings.llm_provider,
+            "name": settings.llm_model,
+        },
+        "audit_logged": bool((workflow_result.get("metadata") or {}).get("audit_logged")),
+        "workflow_fallback": workflow_fallback,
+    }
 
 
 @asynccontextmanager
@@ -201,16 +393,33 @@ async def chat(request: ChatRequest):
         },
     }
 
+    started_at = time.perf_counter()
+
     try:
         workflow_result = _workflow_result_to_dict(await agent_workflow.ainvoke(workflow_state))
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
         response_text = workflow_result.get("final_response") or ""
+        trace = _build_response_trace(
+            workflow_result=workflow_result,
+            history_payload=history_payload,
+            duration_ms=duration_ms,
+        )
         response_metadata = {
             "provider": settings.llm_provider,
             "model": settings.llm_model,
             "intent": (workflow_result.get("intent_result") or {}).get("intent"),
+            "intent_confidence": (workflow_result.get("intent_result") or {}).get("confidence"),
             "routing_decision": workflow_result.get("routing_decision"),
             "capability_matches": workflow_result.get("capability_matches", []),
+            "plan": _summarize_plan(workflow_result.get("plan") or []),
+            "authorization": workflow_result.get("authorization", {}),
             "guardrails": workflow_result.get("guardrails", {}),
+            "execution_results": _summarize_execution_results(workflow_result.get("execution_results") or []),
+            "sql_execution": workflow_result.get("sql_execution", {}),
+            "chart": workflow_result.get("visualization"),
+            "audit_logged": bool((workflow_result.get("metadata") or {}).get("audit_logged")),
+            "duration_ms": duration_ms,
+            "trace": trace,
         }
     except Exception as e:
         logger.exception("Agent workflow failed; falling back to direct LLM call: %s", str(e))
@@ -221,13 +430,29 @@ async def chat(request: ChatRequest):
             temperature=settings.llm_temperature,
             max_tokens=settings.llm_max_tokens,
         )
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        fallback_result = {
+            "final_response": response_text,
+            "metadata": {"workflow_fallback": True},
+        }
         response_metadata = {
             "provider": settings.llm_provider,
             "model": settings.llm_model,
             "workflow_fallback": True,
+            "duration_ms": duration_ms,
+            "trace": _build_response_trace(
+                workflow_result=fallback_result,
+                history_payload=history_payload,
+                duration_ms=duration_ms,
+                workflow_fallback=True,
+            ),
         }
 
-    assistant_message = Message(role="assistant", content=response_text)
+    assistant_message = Message(
+        role="assistant",
+        content=response_text,
+        metadata=response_metadata,
+    )
     conversation_service.add_message(conversation_id, assistant_message)
 
     return ChatResponse(

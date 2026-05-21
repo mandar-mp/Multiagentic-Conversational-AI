@@ -327,6 +327,17 @@ class ResponseGenerationAgent:
         selected = matches[0].get("capability_name") if matches else "general_assistant"
         results = data.get("execution_results") or []
 
+        if selected == "database_analytics":
+            interpretation = data.get("data_interpretation") or {}
+            if interpretation.get("answer"):
+                return {"final_response": interpretation["answer"]}
+
+            execution = data.get("sql_execution") or {}
+            if execution.get("status") == "blocked":
+                return {"final_response": execution.get("message") or "The database query was blocked for safety reasons."}
+            if execution.get("status") == "success":
+                return {"final_response": execution.get("message") or "The database query completed successfully."}
+
         if selected == "general_assistant" and self.llm_service is not None:
             try:
                 response = await self.llm_service.generate_with_history(_history_with_current(data))

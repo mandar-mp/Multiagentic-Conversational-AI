@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../environments/environment';
+import { ChatMetadata } from './models/chat-message';
 
 export interface ChatRequest {
   message: string;
@@ -12,7 +13,7 @@ export interface ChatResponse {
   status: string;
   response: string;
   conversation_id: string;
-  metadata: Record<string, unknown>;
+  metadata: ChatMetadata;
 }
 
 @Injectable({

@@ -1,55 +1,242 @@
-<div class="app-shell">
-  <div class="chat-card">
-    <div class="header">
-      <div class="brand">
-        <div class="brand-badge">G</div>
+<div class="app-shell" (click)="closeFeatureMenu()">
+  <aside class="sidebar">
+    <div class="sidebar-top">
+      <button class="new-chat-button" type="button" (click)="startNewChat()">
+        <span class="button-icon">+</span>
+        <span>New chat</span>
+      </button>
+    </div>
+
+    <nav class="chat-history" aria-label="Chat history">
+      <div class="history-label">Today</div>
+
+      <button
+        class="history-item"
+        type="button"
+        *ngFor="let session of sessions"
+        [class.active]="session.localId === activeSessionId"
+        (click)="selectSession(session)"
+      >
+        <span class="history-title">{{ session.title }}</span>
+        <span class="history-time">{{ formatSessionTime(session.updatedAt) }}</span>
+      </button>
+
+      <div class="empty-history" *ngIf="!sessions.length">
+        Your recent chats will appear here.
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button class="sidebar-action" type="button">
+        <span class="nav-icon">S</span>
+        <span>Settings</span>
+      </button>
+      <button class="sidebar-action" type="button">
+        <span class="nav-icon">L</span>
+        <span>Log out</span>
+      </button>
+      <div class="user-card">
+        <div class="avatar">M</div>
         <div>
-          <h1 class="brand-title">Gemini Chat</h1>
-          <p class="brand-subtitle">A Gemini-style chatbot interface for your AI API</p>
+          <strong>Mandar</strong>
+          <span>Enterprise user</span>
         </div>
-      </div>
-      <div class="status-pill">
-        <span class="spinner" *ngIf="isSending"></span>
-        <span>{{ isSending ? 'Typing…' : statusMessage }}</span>
       </div>
     </div>
+  </aside>
 
-    <div class="conversation" role="log" aria-live="polite">
-      <div *ngFor="let message of messages" class="message" [class.user]="message.role === 'user'" [class.assistant]="message.role === 'assistant'">
-        <div class="message-meta">
-          <span class="message-role">{{ message.role === 'user' ? 'You' : 'Gemini' }}</span>
-          <span>{{ formatTimestamp(message.timestamp) }}</span>
-        </div>
-        <div class="message-bubble">{{ message.content }}</div>
+  <main class="chat-main">
+    <header class="topbar">
+      <button class="ghost-button mobile-menu" type="button" aria-label="Open navigation">=</button>
+      <div class="product-title">
+        <strong>Open Chatbot By Mandar</strong>
+        <span>{{ statusMessage }}</span>
       </div>
-    </div>
+      <div class="topbar-actions">
+        <button class="ghost-button" type="button">Share</button>
+        <div class="avatar small">M</div>
+      </div>
+    </header>
 
-    <div class="input-panel">
-      <div class="controls">
-        <div class="conversation-id">
-          <strong>Conversation:</strong>
-          <span>{{ conversationId || 'new session' }}</span>
+    <section class="conversation" role="log" aria-live="polite">
+      <div class="welcome-panel" *ngIf="!messages.length">
+        <div class="welcome-mark">OC</div>
+        <h1>How can I help you today?</h1>
+        <div class="suggestion-grid">
+          <button class="suggestion" type="button" *ngFor="let prompt of suggestedPrompts" (click)="useSuggestedPrompt(prompt)">
+            {{ prompt }}
+          </button>
         </div>
-        <button class="send-button" type="button" (click)="clearConversation()">Reset</button>
       </div>
 
-      <div class="user-input">
+      <article
+        *ngFor="let message of messages"
+        class="message-row"
+        [class.user]="message.role === 'user'"
+        [class.assistant]="message.role === 'assistant'"
+      >
+        <div class="message-avatar">{{ message.role === 'user' ? 'M' : 'OC' }}</div>
+
+        <div class="message-content">
+          <div class="message-meta">
+            <strong>{{ message.role === 'user' ? 'You' : 'Open Chatbot By Mandar' }}</strong>
+            <span>{{ formatTimestamp(message.timestamp) }}</span>
+          </div>
+          <div class="message-text">{{ message.content }}</div>
+
+          <div class="message-chart" *ngIf="message.metadata?.chart as chart">
+            <div class="chart-card">
+              <div class="chart-header">
+                <strong>{{ chart.title }}</strong>
+                <span class="chart-type">{{ chart.type | uppercase }}</span>
+              </div>
+              <p class="chart-description">{{ chart.description }}</p>
+              <div class="chart-details">
+                <span *ngIf="chart.xKey">X: {{ chart.xKey }}</span>
+                <span *ngIf="chart.yKey">Y: {{ chart.yKey }}</span>
+                <span *ngIf="chart.seriesKey">Series: {{ chart.seriesKey }}</span>
+              </div>
+              <table class="chart-table" *ngIf="chart.rows?.length && chart.columns?.length">
+                <thead>
+                  <tr>
+                    <th *ngFor="let column of chart.columns">{{ column }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let row of chart.rows">
+                    <td *ngFor="let column of chart.columns">{{ row[column] }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <details class="trace-panel" *ngIf="message.role === 'assistant' && getTrace(message) as trace">
+            <summary>
+              <span>View answer trace</span>
+              <span class="trace-summary">
+                {{ formatLabel(trace.summary?.selected_capability) }}
+                <span *ngIf="trace.summary?.duration_ms">/ {{ formatDuration(trace.summary?.duration_ms) }}</span>
+              </span>
+            </summary>
+
+            <div class="trace-overview">
+              <div>
+                <span>Intent</span>
+                <strong>{{ formatLabel(trace.summary?.intent) }}</strong>
+                <small>{{ formatConfidence(trace.summary?.intent_confidence) }} confidence</small>
+              </div>
+              <div>
+                <span>Capability</span>
+                <strong>{{ formatLabel(trace.summary?.selected_capability) }}</strong>
+                <small>{{ formatLabel(trace.summary?.answer_source) }}</small>
+              </div>
+              <div>
+                <span>Model</span>
+                <strong>{{ trace.model?.name || message.metadata?.model || 'N/A' }}</strong>
+                <small>{{ trace.model?.provider || message.metadata?.provider || 'provider unknown' }}</small>
+              </div>
+              <div>
+                <span>Checks</span>
+                <strong>{{ trace.guardrails?.['passed'] ? 'Passed' : 'Needs review' }}</strong>
+                <small>Audit {{ trace.audit_logged ? 'logged' : 'not logged' }}</small>
+              </div>
+            </div>
+
+            <section class="trace-section" *ngIf="trace.agents?.length">
+              <h2>Agents involved</h2>
+              <div class="agent-list">
+                <div class="agent-row" *ngFor="let agent of trace.agents">
+                  <div>
+                    <strong>{{ agent.name }}</strong>
+                    <p>{{ agent.role }}</p>
+                    <small *ngIf="agent.detail">{{ agent.detail }}</small>
+                  </div>
+                  <span class="status-chip" [class.blocked]="agent.status === 'blocked'" [class.skipped]="agent.status === 'skipped'">
+                    {{ formatLabel(agent.status) }}
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            <section class="trace-section" *ngIf="trace.capability_matches?.length">
+              <h2>Capability matches</h2>
+              <div class="match-row" *ngFor="let match of trace.capability_matches">
+                <div>
+                  <strong>{{ formatLabel(match.capability_name) }}</strong>
+                  <p>{{ match.reason }}</p>
+                </div>
+                <span>{{ formatConfidence(match.confidence) }}</span>
+              </div>
+            </section>
+
+            <section class="trace-section" *ngIf="trace.plan?.length">
+              <h2>Plan</h2>
+              <ol class="plan-list">
+                <li *ngFor="let step of trace.plan">
+                  <strong>{{ formatLabel(step.agent_name) }}</strong>
+                  <span>{{ step.action }}</span>
+                  <small>{{ step.requires_approval ? 'Approval required' : 'No approval required' }}</small>
+                </li>
+              </ol>
+            </section>
+
+            <section class="trace-section" *ngIf="trace.execution_results?.length">
+              <h2>Execution</h2>
+              <div class="match-row" *ngFor="let result of trace.execution_results">
+                <div>
+                  <strong>{{ formatLabel(result.agent_name) }}</strong>
+                  <p>{{ result.message || result.error || 'No message returned' }}</p>
+                </div>
+                <span>{{ formatLabel(result.status) }}</span>
+              </div>
+            </section>
+
+            <section class="trace-section" *ngIf="trace.guardrails?.['blocked_steps']?.length">
+              <h2>Blocked steps</h2>
+              <div class="match-row" *ngFor="let step of trace.guardrails?.['blocked_steps']">
+                <div>
+                  <strong>{{ step.step_id }}</strong>
+                  <p>{{ step.reason }}</p>
+                </div>
+              </div>
+            </section>
+          </details>
+        </div>
+      </article>
+
+      <div class="thinking-row" *ngIf="isSending">
+        <div class="message-avatar">OC</div>
+        <div class="typing-pill">
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+        </div>
+      </div>
+    </section>
+
+    <footer class="composer-shell">
+      <div class="composer" (click)="$event.stopPropagation()">
+        <div class="feature-menu" *ngIf="isFeatureMenuOpen">
+          <button type="button">Upload document</button>
+          <button type="button">Deep research</button>
+          <button type="button">Connect data source</button>
+        </div>
+
+        <button class="plus-button" type="button" aria-label="Open features" (click)="toggleFeatureMenu()">+</button>
         <textarea
           class="chat-input"
-          rows="4"
-          placeholder="Ask Gemini anything..."
+          rows="1"
+          placeholder="Message Open Chatbot By Mandar"
           [(ngModel)]="inputText"
           [disabled]="isSending"
           (keyup.enter)="sendMessage()"
         ></textarea>
-
-        <div class="action-row">
-          <span class="status-pill">Powered by your backend API</span>
-          <button class="send-button" type="button" [disabled]="!inputText.trim() || isSending" (click)="sendMessage()">
-            {{ isSending ? 'Sending…' : 'Send message' }}
-          </button>
-        </div>
+        <button class="send-button" type="button" [disabled]="!inputText.trim() || isSending" (click)="sendMessage()">
+          <span>{{ isSending ? '...' : 'Up' }}</span>
+        </button>
       </div>
-    </div>
-  </div>
+      <p class="composer-note">Open Chatbot can make mistakes. AI powered chatbot by Mandar</p>
+    </footer>
+  </main>
 </div>

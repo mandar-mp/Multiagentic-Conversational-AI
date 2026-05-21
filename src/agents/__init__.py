@@ -15,6 +15,14 @@ from .platform_agents import (
     ResponseGenerationAgent,
     ToolExecutionAgent,
 )
+from .database_agents import (
+    DatabaseExecutionAgent,
+    ResultInterpretationAgent,
+    SQLGenerationAgent,
+    SQLPlanningAgent,
+    SQLValidationAgent,
+    VisualizationAgent,
+)
 
 __all__ = [
     "AuthorizationAgent",
@@ -23,9 +31,15 @@ __all__ = [
     "CapabilityMatchingAgent",
     "ConversationContextAgent",
     "CoordinatorAgent",
+    "DatabaseExecutionAgent",
     "GuardrailAgent",
     "IntentRouterAgent",
     "PlanningAgent",
+    "ResultInterpretationAgent",
     "ResponseGenerationAgent",
+    "SQLGenerationAgent",
+    "SQLPlanningAgent",
+    "SQLValidationAgent",
     "ToolExecutionAgent",
+    "VisualizationAgent",
 ]
